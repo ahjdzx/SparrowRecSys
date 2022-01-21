@@ -2,6 +2,8 @@ package com.sparrowrecsys.online.datamanager;
 
 import com.sparrowrecsys.online.util.Config;
 import com.sparrowrecsys.online.util.Utility;
+import org.roaringbitmap.IntConsumer;
+import org.roaringbitmap.RoaringBitmap;
 
 import java.io.File;
 import java.util.*;
@@ -18,17 +20,32 @@ public class DataManager {
     //genre reverse index for quick querying all movies in a genre
     HashMap<String, List<Movie>> genreReverseIndexMap;
 
-    private DataManager(){
+    HashMap<String, HashMap<String, RoaringBitmap>> indexMaps;
+
+    public final static String DIM_GENRE = "genre"; // 流派
+    public final static String DIM_YEAR = "year"; // 上映年份
+
+    private DataManager() {
         this.movieMap = new HashMap<>();
         this.userMap = new HashMap<>();
         this.genreReverseIndexMap = new HashMap<>();
+
+        // 初始化维度索引 map
+        this.indexMaps = new HashMap<>();
+        addIndexType(DIM_GENRE);
+        addIndexType(DIM_YEAR);
         instance = this;
     }
 
-    public static DataManager getInstance(){
-        if (null == instance){
-            synchronized (DataManager.class){
-                if (null == instance){
+    // 添加索引维度
+    private void addIndexType(String indexType) {
+        this.indexMaps.put(indexType, new HashMap<>());
+    }
+
+    public static DataManager getInstance() {
+        if (null == instance) {
+            synchronized (DataManager.class) {
+                if (null == instance) {
                     instance = new DataManager();
                 }
             }
@@ -37,12 +54,12 @@ public class DataManager {
     }
 
     //load data from file system including movie, rating, link data and model data like embedding vectors.
-    public void loadData(String movieDataPath, String linkDataPath, String ratingDataPath, String movieEmbPath, String userEmbPath, String movieRedisKey, String userRedisKey) throws Exception{
+    public void loadData(String movieDataPath, String linkDataPath, String ratingDataPath, String movieEmbPath, String userEmbPath, String movieRedisKey, String userRedisKey) throws Exception {
         loadMovieData(movieDataPath);
         loadLinkData(linkDataPath);
         loadRatingData(ratingDataPath);
         loadMovieEmb(movieEmbPath, movieRedisKey);
-        if (Config.IS_LOAD_ITEM_FEATURE_FROM_REDIS){
+        if (Config.IS_LOAD_ITEM_FEATURE_FROM_REDIS) {
             loadMovieFeatures("mf:");
         }
 
@@ -50,31 +67,33 @@ public class DataManager {
     }
 
     //load movie data from movies.csv
-    private void loadMovieData(String movieDataPath) throws Exception{
+    private void loadMovieData(String movieDataPath) throws Exception {
         System.out.println("Loading movie data from " + movieDataPath + " ...");
         boolean skipFirstLine = true;
         try (Scanner scanner = new Scanner(new File(movieDataPath))) {
             while (scanner.hasNextLine()) {
                 String movieRawData = scanner.nextLine();
-                if (skipFirstLine){
+                if (skipFirstLine) {
                     skipFirstLine = false;
                     continue;
                 }
                 String[] movieData = movieRawData.split(",");
-                if (movieData.length == 3){
+                if (movieData.length == 3) {
                     Movie movie = new Movie();
                     movie.setMovieId(Integer.parseInt(movieData[0]));
                     int releaseYear = parseReleaseYear(movieData[1].trim());
-                    if (releaseYear == -1){
+                    if (releaseYear == -1) {
                         movie.setTitle(movieData[1].trim());
-                    }else{
+                    } else {
                         movie.setReleaseYear(releaseYear);
-                        movie.setTitle(movieData[1].trim().substring(0, movieData[1].trim().length()-6).trim());
+                        movie.setTitle(movieData[1].trim().substring(0, movieData[1].trim().length() - 6).trim());
+
+                        addMovie2ReleaseYearIndex(releaseYear, movie);
                     }
                     String genres = movieData[2];
-                    if (!genres.trim().isEmpty()){
+                    if (!genres.trim().isEmpty()) {
                         String[] genreArray = genres.split("\\|");
-                        for (String genre : genreArray){
+                        for (String genre : genreArray) {
                             movie.addGenre(genre);
                             addMovie2GenreIndex(genre, movie);
                         }
@@ -87,7 +106,7 @@ public class DataManager {
     }
 
     //load movie embedding
-    private void loadMovieEmb(String movieEmbPath, String embKey) throws Exception{
+    private void loadMovieEmb(String movieEmbPath, String embKey) throws Exception {
         if (Config.EMB_DATA_SOURCE.equals(Config.DATA_SOURCE_FILE)) {
             System.out.println("Loading movie embedding from " + movieEmbPath + " ...");
             int validEmbCount = 0;
@@ -106,11 +125,11 @@ public class DataManager {
                 }
             }
             System.out.println("Loading movie embedding completed. " + validEmbCount + " movie embeddings in total.");
-        }else{
+        } else {
             System.out.println("Loading movie embedding from Redis ...");
             Set<String> movieEmbKeys = RedisClient.getInstance().keys(embKey + "*");
             int validEmbCount = 0;
-            for (String movieEmbKey : movieEmbKeys){
+            for (String movieEmbKey : movieEmbKeys) {
                 String movieId = movieEmbKey.split(":")[1];
                 Movie m = getMovieById(Integer.parseInt(movieId));
                 if (null == m) {
@@ -124,11 +143,11 @@ public class DataManager {
     }
 
     //load movie features
-    private void loadMovieFeatures(String movieFeaturesPrefix) throws Exception{
+    private void loadMovieFeatures(String movieFeaturesPrefix) throws Exception {
         System.out.println("Loading movie features from Redis ...");
         Set<String> movieFeaturesKeys = RedisClient.getInstance().keys(movieFeaturesPrefix + "*");
         int validFeaturesCount = 0;
-        for (String movieFeaturesKey : movieFeaturesKeys){
+        for (String movieFeaturesKey : movieFeaturesKeys) {
             String movieId = movieFeaturesKey.split(":")[1];
             Movie m = getMovieById(Integer.parseInt(movieId));
             if (null == m) {
@@ -141,7 +160,7 @@ public class DataManager {
     }
 
     //load user embedding
-    private void loadUserEmb(String userEmbPath, String embKey) throws Exception{
+    private void loadUserEmb(String userEmbPath, String embKey) throws Exception {
         if (Config.EMB_DATA_SOURCE.equals(Config.DATA_SOURCE_FILE)) {
             System.out.println("Loading user embedding from " + userEmbPath + " ...");
             int validEmbCount = 0;
@@ -164,36 +183,36 @@ public class DataManager {
     }
 
     //parse release year
-    private int parseReleaseYear(String rawTitle){
-        if (null == rawTitle || rawTitle.trim().length() < 6){
+    private int parseReleaseYear(String rawTitle) {
+        if (null == rawTitle || rawTitle.trim().length() < 6) {
             return -1;
-        }else{
-            String yearString = rawTitle.trim().substring(rawTitle.length()-5, rawTitle.length()-1);
-            try{
+        } else {
+            String yearString = rawTitle.trim().substring(rawTitle.length() - 5, rawTitle.length() - 1);
+            try {
                 return Integer.parseInt(yearString);
-            }catch (NumberFormatException exception){
+            } catch (NumberFormatException exception) {
                 return -1;
             }
         }
     }
 
     //load links data from links.csv
-    private void loadLinkData(String linkDataPath) throws Exception{
+    private void loadLinkData(String linkDataPath) throws Exception {
         System.out.println("Loading link data from " + linkDataPath + " ...");
         int count = 0;
         boolean skipFirstLine = true;
         try (Scanner scanner = new Scanner(new File(linkDataPath))) {
             while (scanner.hasNextLine()) {
                 String linkRawData = scanner.nextLine();
-                if (skipFirstLine){
+                if (skipFirstLine) {
                     skipFirstLine = false;
                     continue;
                 }
                 String[] linkData = linkRawData.split(",");
-                if (linkData.length == 3){
+                if (linkData.length == 3) {
                     int movieId = Integer.parseInt(linkData[0]);
                     Movie movie = this.movieMap.get(movieId);
-                    if (null != movie){
+                    if (null != movie) {
                         count++;
                         movie.setImdbId(linkData[1].trim());
                         movie.setTmdbId(linkData[2].trim());
@@ -205,30 +224,30 @@ public class DataManager {
     }
 
     //load ratings data from ratings.csv
-    private void loadRatingData(String ratingDataPath) throws Exception{
+    private void loadRatingData(String ratingDataPath) throws Exception {
         System.out.println("Loading rating data from " + ratingDataPath + " ...");
         boolean skipFirstLine = true;
         int count = 0;
         try (Scanner scanner = new Scanner(new File(ratingDataPath))) {
             while (scanner.hasNextLine()) {
                 String ratingRawData = scanner.nextLine();
-                if (skipFirstLine){
+                if (skipFirstLine) {
                     skipFirstLine = false;
                     continue;
                 }
                 String[] linkData = ratingRawData.split(",");
-                if (linkData.length == 4){
-                    count ++;
+                if (linkData.length == 4) {
+                    count++;
                     Rating rating = new Rating();
                     rating.setUserId(Integer.parseInt(linkData[0]));
                     rating.setMovieId(Integer.parseInt(linkData[1]));
                     rating.setScore(Float.parseFloat(linkData[2]));
                     rating.setTimestamp(Long.parseLong(linkData[3]));
                     Movie movie = this.movieMap.get(rating.getMovieId());
-                    if (null != movie){
+                    if (null != movie) {
                         movie.addRating(rating);
                     }
-                    if (!this.userMap.containsKey(rating.getUserId())){
+                    if (!this.userMap.containsKey(rating.getUserId())) {
                         User user = new User();
                         user.setUserId(rating.getUserId());
                         this.userMap.put(user.getUserId(), user);
@@ -242,25 +261,50 @@ public class DataManager {
     }
 
     //add movie to genre reversed index
-    private void addMovie2GenreIndex(String genre, Movie movie){
-        if (!this.genreReverseIndexMap.containsKey(genre)){
+    private void addMovie2GenreIndex(String genre, Movie movie) {
+        if (!this.genreReverseIndexMap.containsKey(genre)) {
             this.genreReverseIndexMap.put(genre, new ArrayList<>());
         }
         this.genreReverseIndexMap.get(genre).add(movie);
+
+        // Use Roaring Bitmap
+        HashMap<String, RoaringBitmap> genreIndexMap = this.indexMaps.get(DIM_GENRE);
+        if (!genreIndexMap.containsKey(genre)) {
+            genreIndexMap.put(genre, new RoaringBitmap());
+        }
+        genreIndexMap.get(genre).add(movie.getMovieId());
+    }
+
+    // add movie to release year reversed index
+    private void addMovie2ReleaseYearIndex(int releaseYear, Movie movie) {
+        String year = String.valueOf(releaseYear);
+        HashMap<String, RoaringBitmap> yearIndexMap = this.indexMaps.get(DIM_YEAR);
+        if (!yearIndexMap.containsKey(year)) {
+            yearIndexMap.put(year, new RoaringBitmap());
+        }
+        yearIndexMap.get(year).add(movie.movieId);
     }
 
     //get movies by genre, and order the movies by sortBy method
-    public List<Movie> getMoviesByGenre(String genre, int size, String sortBy){
-        if (null != genre){
+    public List<Movie> getMoviesByGenre(String genre, int size, String sortBy) {
+        if (null != genre) {
             List<Movie> movies = new ArrayList<>(this.genreReverseIndexMap.get(genre));
-            switch (sortBy){
-                case "rating":movies.sort((m1, m2) -> Double.compare(m2.getAverageRating(), m1.getAverageRating()));break;
-                case "releaseYear": movies.sort((m1, m2) -> Integer.compare(m2.getReleaseYear(), m1.getReleaseYear()));break;
-                case "popularity": movies.sort((m1, m2) -> Integer.compare(m2.getRatingNumber(), m1.getRatingNumber()));break;
+            switch (sortBy) {
+                case "rating":
+                    movies.sort((m1, m2) -> Double.compare(m2.getAverageRating(), m1.getAverageRating()));
+                    break;
+                case "releaseYear":
+                    movies.sort((m1, m2) -> Integer.compare(m2.getReleaseYear(), m1.getReleaseYear()));
+                    break;
+                case "popularity":
+                    movies.sort((m1, m2) -> Integer.compare(m2.getRatingNumber(), m1.getRatingNumber()));
+                    break;
                 default:
             }
 
-            if (movies.size() > size){
+            System.out.println("search from hashmap, total size: " + movies.size());
+
+            if (movies.size() > size) {
                 return movies.subList(0, size);
             }
             return movies;
@@ -268,28 +312,82 @@ public class DataManager {
         return null;
     }
 
-    //get top N movies order by sortBy method
-    public List<Movie> getMovies(int size, String sortBy){
-            List<Movie> movies = new ArrayList<>(movieMap.values());
-            switch (sortBy){
-                case "rating":movies.sort((m1, m2) -> Double.compare(m2.getAverageRating(), m1.getAverageRating()));break;
-                case "releaseYear": movies.sort((m1, m2) -> Integer.compare(m2.getReleaseYear(), m1.getReleaseYear()));break;
-                default:
+    // 根据维度字段值检索电影
+    public List<Movie> getMoviesFromBitmap(Map<String, HashSet<String>> indexTypeFields, int size, String sortBy) {
+        RoaringBitmap rb = null;
+        for (Map.Entry<String, HashSet<String>> entry : indexTypeFields.entrySet()) {
+            String indexType = entry.getKey();
+            RoaringBitmap orIndex = new RoaringBitmap();
+            for (String field : entry.getValue()) {
+                RoaringBitmap fieldBitmap = this.indexMaps.get(indexType).get(field);
+                if (fieldBitmap != null) {
+                    orIndex.or(fieldBitmap);
+                }
             }
+            if (rb == null) {
+                rb = orIndex;
+            } else {
+                rb = RoaringBitmap.and(rb, orIndex);
+            }
+        }
 
-            if (movies.size() > size){
-                return movies.subList(0, size);
+        List<Movie> movies = new ArrayList<>();
+        rb.forEach(new IntConsumer() {
+            @Override
+            public void accept(int movieId) {
+                movies.add(movieMap.get(movieId));
             }
-            return movies;
+        });
+        switch (sortBy) {
+            case "rating":
+                movies.sort((m1, m2) -> Double.compare(m2.getAverageRating(), m1.getAverageRating()));
+                break;
+            case "releaseYear":
+                movies.sort((m1, m2) -> Integer.compare(m2.getReleaseYear(), m1.getReleaseYear()));
+                break;
+            case "popularity":
+                movies.sort((m1, m2) -> Integer.compare(m2.getRatingNumber(), m1.getRatingNumber()));
+                break;
+            default:
+        }
+
+        int cardinality = rb.getCardinality();
+        System.out.println("search from bitmap, cardinality: " + cardinality);
+        System.out.println("search from bitmap, movies total size: " + movies.size());
+
+        if (movies.size() > size) {
+            return movies.subList(0, size);
+        }
+        return movies;
+    }
+
+
+    //get top N movies order by sortBy method
+    public List<Movie> getMovies(int size, String sortBy) {
+        List<Movie> movies = new ArrayList<>(movieMap.values());
+        switch (sortBy) {
+            case "rating":
+                movies.sort((m1, m2) -> Double.compare(m2.getAverageRating(), m1.getAverageRating()));
+                break;
+            case "releaseYear":
+                movies.sort((m1, m2) -> Integer.compare(m2.getReleaseYear(), m1.getReleaseYear()));
+                break;
+            default:
+        }
+
+        if (movies.size() > size) {
+            return movies.subList(0, size);
+        }
+        return movies;
     }
 
     //get movie object by movie id
-    public Movie getMovieById(int movieId){
+    public Movie getMovieById(int movieId) {
         return this.movieMap.get(movieId);
     }
 
     //get user object by user id
-    public User getUserById(int userId){
+    public User getUserById(int userId) {
         return this.userMap.get(userId);
     }
 }

@@ -106,6 +106,15 @@ function addGenreRow(pageId, rowName, rowId, size, baseUrl) {
     });
 };
 
+ function addGenreRowFromBitmap(pageId, rowName, rowId, size, baseUrl) {
+     addRowFrame(pageId, rowName, rowId, baseUrl);
+     $.getJSON(baseUrl + "myrecommendation?genre="+rowName+"&size="+size+"&sortby=popularity", function(result){
+         $.each(result, function(i, movie){
+             appendMovie2Row(rowId, movie.title, movie.movieId, movie.releaseYear, movie.averageRating.toPrecision(2), movie.ratingNumber, movie.genres,baseUrl);
+         });
+     });
+ };
+
 function addRelatedMovies(pageId, containerId, movieId, baseUrl){
 
     var rowDiv = '<div class="frontpage-section-top"> \

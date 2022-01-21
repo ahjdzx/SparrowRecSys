@@ -59,6 +59,12 @@
 
     <dependencies>
 
+        <dependency>
+            <groupId>org.roaringbitmap</groupId>
+            <artifactId>RoaringBitmap</artifactId>
+            <version>0.9.23</version>
+        </dependency>
+
         <!-- online libs -->
         <!-- https://mvnrepository.com/artifact/org.eclipse.jetty/jetty-server -->
         <dependency>

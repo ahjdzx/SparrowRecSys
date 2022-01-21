@@ -128,10 +128,15 @@ function getQueryString(name, windowLocation) {
 var windowLocation = window.location;
 var type = getQueryString("type",windowLocation);
 var value = getQueryString("value",windowLocation);
+var from = getQueryString("from",windowLocation);
 
 var baseUrl = windowLocation.protocol + "//" + windowLocation.host + "/"
 if(type == "genre"){
-    addGenreRow('#recPage', value, value.toLowerCase() + '-collection', 100, baseUrl);
+    if (from == "bitmap") {
+        addGenreRowFromBitmap('#recPage', value, value.toLowerCase() + '-collection', 100, baseUrl);
+    } else {
+        addGenreRow('#recPage', value, value.toLowerCase() + '-collection', 100, baseUrl);
+    }
 }
 
 </script>
