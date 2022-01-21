@@ -5,7 +5,9 @@ import com.sparrowrecsys.online.util.Utility;
 import org.roaringbitmap.IntConsumer;
 import org.roaringbitmap.RoaringBitmap;
 
+import java.io.DataOutputStream;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.util.*;
 
 /**
@@ -20,8 +22,10 @@ public class DataManager {
     //genre reverse index for quick querying all movies in a genre
     HashMap<String, List<Movie>> genreReverseIndexMap;
 
+    // indexType -> field -> RoaringBitmap
     HashMap<String, HashMap<String, RoaringBitmap>> indexMaps;
 
+    public final static String DIM_ALL = "all";
     public final static String DIM_GENRE = "genre"; // 流派
     public final static String DIM_YEAR = "year"; // 上映年份
 
@@ -32,6 +36,7 @@ public class DataManager {
 
         // 初始化维度索引 map
         this.indexMaps = new HashMap<>();
+        addIndexType(DIM_ALL);
         addIndexType(DIM_GENRE);
         addIndexType(DIM_YEAR);
         instance = this;
@@ -69,6 +74,7 @@ public class DataManager {
     //load movie data from movies.csv
     private void loadMovieData(String movieDataPath) throws Exception {
         System.out.println("Loading movie data from " + movieDataPath + " ...");
+        int lessThree = 0;
         boolean skipFirstLine = true;
         try (Scanner scanner = new Scanner(new File(movieDataPath))) {
             while (scanner.hasNextLine()) {
@@ -98,11 +104,48 @@ public class DataManager {
                             addMovie2GenreIndex(genre, movie);
                         }
                     }
+
+                    // Use Roaring Bitmap
+                    HashMap<String, RoaringBitmap> allIndexMap = this.indexMaps.get(DIM_ALL);
+                    if (!allIndexMap.containsKey("1")) {
+                        allIndexMap.put("1", new RoaringBitmap());
+                    }
+                    allIndexMap.get("1").add(movie.getMovieId());
                     this.movieMap.put(movie.getMovieId(), movie);
+                } else {
+                    lessThree++;
                 }
             }
         }
-        System.out.println("Loading movie data completed. " + this.movieMap.size() + " movies in total.");
+        System.out.println("Loading movie data completed. " + this.movieMap.size() + " movies in total. lessThanThree: " + lessThree);
+
+        // 序列化空间大小验证
+        for (Map.Entry<String, HashMap<String, RoaringBitmap>> entry : this.indexMaps.entrySet()) {
+            String indexType = entry.getKey();
+            for (Map.Entry<String, RoaringBitmap> temp : entry.getValue().entrySet()) {
+                String field = temp.getKey();
+                String fileName = "/tmp/movies/" + indexType + "_" + field + ".bin";
+                try (DataOutputStream out = new DataOutputStream(new FileOutputStream(fileName))) {
+                    temp.getValue().serialize(out);
+                }
+
+                if (indexType.equals(DIM_ALL)) {
+                    boolean answer = temp.getValue().runOptimize();
+                    System.out.println("indexType: " + indexType + ", field: " + field + ", runOptimize answer: " + answer);
+                }
+            }
+        }
+
+        for (Map.Entry<String, HashMap<String, RoaringBitmap>> entry : this.indexMaps.entrySet()) {
+            String indexType = entry.getKey();
+            for (Map.Entry<String, RoaringBitmap> temp : entry.getValue().entrySet()) {
+                String field = temp.getKey();
+                String fileName = "/tmp/movies2/" + indexType + "_" + field + ".bin";
+                try (DataOutputStream out = new DataOutputStream(new FileOutputStream(fileName))) {
+                    temp.getValue().serialize(out);
+                }
+            }
+        }
     }
 
     //load movie embedding

@@ -38,10 +38,16 @@ public class MyRecommendationService extends HttpServlet {
             String sortby = request.getParameter("sortby");
 
             HashMap<String, HashSet<String>> indexTypeFields = new HashMap<String, HashSet<String>>();
+
+            HashSet<String> allSet = new HashSet<>();
+            allSet.add("1");
+            indexTypeFields.put(DataManager.DIM_ALL, allSet);
+
             if (StringUtils.isNotEmpty(genre)) {
                 String[] fields = StringUtils.split(genre, ",");
                 indexTypeFields.put(DataManager.DIM_GENRE, new HashSet<>(Arrays.asList(fields)));
             }
+
             if (StringUtils.isNotEmpty(year)) {
                 String[] fields = StringUtils.split(year, ",");
                 indexTypeFields.put(DataManager.DIM_YEAR, new HashSet<>(Arrays.asList(fields)));
